@@ -1,0 +1,6 @@
+{
+  "name": "Zeta Interactive AI Fiction",
+  "description": "배우 및 감독 모드를 바탕으로 입체적인 페르소나와 숨겨진 속마음을 나누는 파스텔톤 한글 인터랙티브 AI 소설 플랫폼",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
