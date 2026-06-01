@@ -110,17 +110,17 @@ export function CharacterCreator({ onBack, onSave, editCharacter }: CharacterCre
   useEffect(() => {
     if (editCharacter && editCharacter.metadata) {
       const meta = editCharacter.metadata;
-      if (meta.세계관설정Name) setWorldName(meta.세계관설정Name);
-      if (meta.세계관설정Description) setWorldDescription(meta.세계관설정Description);
-      if (meta.세계관설정Scenario) setWorldScenario(meta.세계관설정Scenario);
-      if (meta.sharingLevel) setSharingLevel(meta.sharingLevel);
+      if (meta.세계관설정Name !== undefined) setWorldName(meta.세계관설정Name);
+      if (meta.세계관설정Description !== undefined) setWorldDescription(meta.세계관설정Description);
+      if (meta.세계관설정Scenario !== undefined) setWorldScenario(meta.세계관설정Scenario);
+      if (meta.sharingLevel !== undefined) setSharingLevel(meta.sharingLevel);
       if (meta.allowRemix !== undefined) setAllowRemix(meta.allowRemix);
-      if (meta.introIdea) setIntroIdea(meta.introIdea);
-      if (meta.주인공설정Name) setPlayerName(meta.주인공설정Name);
-      if (meta.주인공설정Persona) setPlayerPersona(meta.주인공설정Persona);
-      if (meta.인물목록) setNpcs(meta.인물목록);
-      if (meta.인물관계hips) setRelationships(meta.인물관계hips);
-      if (meta.globalLorebooks) setGlobalLorebooks(meta.globalLorebooks);
+      if (meta.introIdea !== undefined) setIntroIdea(meta.introIdea);
+      if (meta.주인공설정Name !== undefined) setPlayerName(meta.주인공설정Name);
+      if (meta.주인공설정Persona !== undefined) setPlayerPersona(meta.주인공설정Persona);
+      if (meta.인물목록 !== undefined) setNpcs(meta.인물목록);
+      if (meta.인물관계hips !== undefined) setRelationships(meta.인물관계hips);
+      if (meta.globalLorebooks !== undefined) setGlobalLorebooks(meta.globalLorebooks);
     }
   }, [editCharacter]);
 
@@ -492,10 +492,12 @@ export function CharacterCreator({ onBack, onSave, editCharacter }: CharacterCre
     if (인물목록.length <= 1) {
       // Create empty npc instead of blocking
       setNpcs([createEmptyNpc(0)]);
+      setRelationships([]); // Clear relationships since we have only 1 empty npc
       return;
     }
     const filtered = 인물목록.filter(n => n.id !== npcId);
     setNpcs(filtered);
+    setRelationships(prev => prev.filter(r => r.from !== npcId && r.to !== npcId));
     if (selectedNpcId === npcId) {
       setSelectedNpcId(filtered.length > 0 ? filtered[0].id : '');
     }
@@ -573,12 +575,12 @@ export function CharacterCreator({ onBack, onSave, editCharacter }: CharacterCre
 
     // 1. Build hyper-meticulous W++ system prompt containing the whole 세계관설정 network
     const wPlusPrompt = `[World_Setting("${세계관설정Name}")]
-[World_Description("${세계관설정Description || '평화롭고 따스한 가상 세계 대지'}")]
-[World_Scenario("${세계관설정Scenario || '아름다운 파스텔 하늘빛 아래 조화를 이룬 조용한 숲속 마을'}")]
+[World_Description("${세계관설정Description}")]
+[World_Scenario("${세계관설정Scenario}")]
 
 [My_Character_Protagonist]
-- Name: "${주인공설정Name || '여행자(나)'}"
-- Persona/Background: "${주인공설정Persona || '낯선 장소로 우연히 오게 되어 여러 사람과의 만남을 이어가는 호기심 많은 여행자'}"
+- Name: "${주인공설정Name}"
+- Persona/Background: "${주인공설정Persona}"
 
 [World_NPC_List]
 ${인물목록.map((npc, idx) => `
@@ -616,14 +618,14 @@ ${globalLorebooks.length > 0 ? globalLorebooks.map(l => `[Lore_Entry]\n- Name: $
     // 2. Compose unique script-styled theatrical greeting message combining NPC words
     let compiledFirstGreeting = `*감미로운 파스텔빛 노을이 옅게 흩날리는 평화로운 세계가 펼쳐집니다. 이 포근한 ${세계관설정Name}에서 당신(${주인공설정Name || '플레이어'})은 따스하게 불어오는 미풍과 함께 조용히 눈을 뜹니다.*`;
     if (introIdea.trim()) {
-      compiledFirstGreeting = `[AUTO_START_INTRO] ${introIdea.trim()}`;
+      compiledFirstGreeting = introIdea.trim();
     }
 
     const newChar: DBCharacter = {
       id: editCharacter?.id || `custom-world-${Date.now()}`,
       creator_id: 'user',
       name: 세계관설정Name,
-      description: 세계관설정Description || `${세계관설정Name}의 이야기 세계관`,
+      description: 세계관설정Description,
       system_prompt: wPlusPrompt,
       greeting_message: compiledFirstGreeting,
       is_public: sharingLevel === 'public',
@@ -645,10 +647,46 @@ ${globalLorebooks.length > 0 ? globalLorebooks.map(l => `[Lore_Entry]\n- Name: $
         주인공설정Name,
         주인공설정Persona,
         인물목록,
-        인물관계hips,
+        인물관계hips: 인물관계hips.filter(rel => {
+          const npcFromExists = rel.from === '주인공설정' || 인물목록.some(n => n.id === rel.from);
+          const npcToExists = rel.to === '주인공설정' || 인물목록.some(n => n.id === rel.to);
+          return npcFromExists && npcToExists;
+        }),
         globalLorebooks
       }
     };
+
+    // Find deleted NPCs comparing with editCharacter (if any) to prevent traces from remaining in dynamic story memory
+    const deletedNpcNames: string[] = [];
+    if (editCharacter && editCharacter.metadata && editCharacter.metadata.인물목록) {
+      const oldNpcs = editCharacter.metadata.인물목록;
+      oldNpcs.forEach((oldNpc: any) => {
+        const stillExists = 인물목록.some(n => n.id === oldNpc.id);
+        if (!stillExists && oldNpc.name.trim()) {
+          deletedNpcNames.push(oldNpc.name.trim());
+        }
+      });
+    }
+
+    // Find deleted lorebooks comparing with editCharacter (if any) to prevent traces from remaining in dynamic story memory
+    const deletedLoreWords: string[] = [];
+    if (editCharacter && editCharacter.metadata && editCharacter.metadata.globalLorebooks) {
+      const oldLores = editCharacter.metadata.globalLorebooks;
+      oldLores.forEach((oldLore: any) => {
+        const stillExists = globalLorebooks.some(l => l.id === oldLore.id);
+        if (!stillExists) {
+          if (oldLore.title.trim()) deletedLoreWords.push(oldLore.title.trim());
+          if (oldLore.keywords.trim()) {
+            oldLore.keywords.split(',').forEach((kw: string) => {
+              const kwTrimmed = kw.trim();
+              if (kwTrimmed && !deletedLoreWords.includes(kwTrimmed)) {
+                deletedLoreWords.push(kwTrimmed);
+              }
+            });
+          }
+        }
+      });
+    }
 
     // Store custom portrait in local storage meta using the first NPC's beauty portrait or spark
     const featuredPortrait = 인물목록.find(n => n.profileImage)?.profileImage || 인물목록[0]?.profileImage;
@@ -666,6 +704,126 @@ ${globalLorebooks.length > 0 ? globalLorebooks.map(l => `[Lore_Entry]\n- Name: $
       { name: '로어북 (세계관 설정 지식)', description: globalLorebooks.length > 0 ? globalLorebooks.map(l => `설정명: ${l.title}\n키워드: [${l.keywords}]\n내용: ${l.content}`).join('\n\n') : '설정 없음'}
     ];
     localStorage.setItem(`lore-${newChar.id}`, JSON.stringify(compiledWorldLorebook));
+
+    // Sanitization of active chatsession and BUCKET_B, C, E due to deleted entities
+    if (deletedNpcNames.length > 0 || deletedLoreWords.length > 0) {
+      const sessionKey = `chatsession-${newChar.id}`;
+      const savedSession = localStorage.getItem(sessionKey);
+      if (savedSession) {
+        try {
+          const session = JSON.parse(savedSession);
+          if (session) {
+            let dirty = false;
+            
+            // Clean history (messages) that mention or relate to deleted characters/lore
+            if (session.messages && Array.isArray(session.messages)) {
+              const originalLength = session.messages.length;
+              session.messages = session.messages.filter((msg: any) => {
+                const mentionsDeletedNpc = deletedNpcNames.some(name => msg.text.includes(name));
+                const mentionsDeletedLore = deletedLoreWords.some(word => msg.text.includes(word));
+                const speakerIsDeletedNpc = msg.speakerName && deletedNpcNames.includes(msg.speakerName);
+                return !mentionsDeletedNpc && !mentionsDeletedLore && !speakerIsDeletedNpc;
+              });
+              if (session.messages.length !== originalLength) {
+                dirty = true;
+              }
+            }
+
+            // Clean plotSummary to make sure no bleed of deleted items affects subsequent responses
+            if (session.plotSummary && typeof session.plotSummary === 'string') {
+              const originalSummary = session.plotSummary;
+              const sentences = session.plotSummary.split(/[.!?\n]/).map((s: string) => s.trim()).filter(Boolean);
+              const cleanSentences = sentences.filter((s: string) => {
+                const mentionsDeletedNpc = deletedNpcNames.some(name => s.includes(name));
+                const mentionsDeletedLore = deletedLoreWords.some(word => s.includes(word));
+                return !mentionsDeletedNpc && !mentionsDeletedLore;
+              });
+              session.plotSummary = cleanSentences.join('. ');
+              if (session.plotSummary !== originalSummary) {
+                dirty = true;
+              }
+            }
+
+            // Clean narrativeState
+            if (session.narrativeState && typeof session.narrativeState === 'string') {
+              const mentionsDeletedNpc = deletedNpcNames.some(name => session.narrativeState.includes(name));
+              const mentionsDeletedLore = deletedLoreWords.some(word => session.narrativeState.includes(word));
+              if (mentionsDeletedNpc || mentionsDeletedLore) {
+                session.narrativeState = '이전 설정 내용이 정리된 후 새 흐름으로 조율 중';
+                dirty = true;
+              }
+            }
+
+            if (dirty) {
+              localStorage.setItem(sessionKey, JSON.stringify(session));
+            }
+          }
+        } catch (err) {
+          console.error("Sanitizer fail for chat session", err);
+        }
+      }
+
+      // Clean BUCKET_C: Anchor events (memories)
+      const bucketCKey = `bucket-${newChar.id}-C`;
+      const savedC = localStorage.getItem(bucketCKey);
+      if (savedC) {
+        try {
+          const events = JSON.parse(savedC);
+          if (Array.isArray(events)) {
+            const cleanEvents = events.filter((evt: string) => {
+              const mentionsDeletedNpc = deletedNpcNames.some(name => evt.includes(name));
+              const mentionsDeletedLore = deletedLoreWords.some(word => evt.includes(word));
+              return !mentionsDeletedNpc && !mentionsDeletedLore;
+            });
+            if (cleanEvents.length !== events.length) {
+              localStorage.setItem(bucketCKey, JSON.stringify(cleanEvents));
+            }
+          }
+        } catch (e) {
+          console.error(e);
+        }
+      }
+
+      // Clean BUCKET_E: World variables
+      const bucketEKey = `bucket-${newChar.id}-E`;
+      const savedE = localStorage.getItem(bucketEKey);
+      if (savedE) {
+        try {
+          const variables = JSON.parse(savedE);
+          if (Array.isArray(variables)) {
+            const cleanVariables = variables.filter((v: string) => {
+              const mentionsDeletedNpc = deletedNpcNames.some(name => v.includes(name));
+              const mentionsDeletedLore = deletedLoreWords.some(word => v.includes(word));
+              return !mentionsDeletedNpc && !mentionsDeletedLore;
+            });
+            if (cleanVariables.length !== variables.length) {
+              localStorage.setItem(bucketEKey, JSON.stringify(cleanVariables));
+            }
+          }
+        } catch (e) {
+          console.error(e);
+        }
+      }
+
+      // Clean BUCKET_B: psychological state / inner feeling
+      const bucketBKey = `bucket-${newChar.id}-B`;
+      const savedB = localStorage.getItem(bucketBKey);
+      if (savedB) {
+        try {
+          const bData = JSON.parse(savedB);
+          if (bData && bData.innerFeeling) {
+            const mentionsDeletedNpc = deletedNpcNames.some(name => bData.innerFeeling.includes(name));
+            const mentionsDeletedLore = deletedLoreWords.some(word => bData.innerFeeling.includes(word));
+            if (mentionsDeletedNpc || mentionsDeletedLore) {
+              bData.innerFeeling = "설정이 정리된 직후의 고요한 심경";
+              localStorage.setItem(bucketBKey, JSON.stringify(bData));
+            }
+          }
+        } catch (e) {
+          console.error(e);
+        }
+      }
+    }
 
     setTimeout(() => {
       onSave(newChar);
@@ -788,28 +946,14 @@ ${globalLorebooks.length > 0 ? globalLorebooks.map(l => `[Lore_Entry]\n- Name: $
                           <label className="block text-[11px] font-bold text-[#9A9A9E] uppercase tracking-wide">세계관 이름 (World Name) *</label>
                           {renderAutofillButton('세계관설정Name')}
                         </div>
-                        <input
-                          id="세계관설정-name-field"
-                          type="text"
-                          value={세계관설정Name}
-                          onChange={(e) => setWorldName(e.target.value)}
-                          placeholder="💡 예시: 이곳은 어떤 이름의 무대인가요? (예: 파스텔 동화 마을)"
-                          className="w-full bg-white border border-[#EBE6DB] rounded-xl px-4 py-2.5 text-xs text-[#0F172A] font-semibold focus:ring-1 focus:ring-gray-300 focus:outline-none placeholder:text-gray-400"
-                        />
+                        <AutoResizeTextarea id="세계관설정-name-field" value={세계관설정Name} onChange={(e) => setWorldName(e.target.value)} placeholder="💡 예시: 이곳은 어떤 이름의 무대인가요? (예: 파스텔 동화 마을)" className={"resize-none py-3 min-h-[44px] " + "w-full bg-white border border-[#EBE6DB] rounded-xl px-4 py-2.5 text-xs text-[#0F172A] font-semibold focus:ring-1 focus:ring-gray-300 focus:outline-none placeholder:text-gray-400"} />
                       </div>
                       <div>
                         <div className="flex items-center justify-between mb-1.5">
                           <label className="block text-[11px] font-bold text-[#9A9A9E] uppercase tracking-wide">세계관 핵심 요약 (Theme SLG)</label>
                           {renderAutofillButton('세계관설정Description')}
                         </div>
-                        <input
-                          id="세계관설정-desc-field"
-                          type="text"
-                          value={세계관설정Description}
-                          onChange={(e) => setWorldDescription(e.target.value)}
-                          placeholder="💡 예시: 소설의 분위기를 한 줄로 설명해 주세요. (예: 아늑한 찻집에서 치유받는 일상)"
-                          className="w-full bg-white border border-[#EBE6DB] rounded-xl px-4 py-2.5 text-xs text-[#0F172A] font-semibold focus:ring-1 focus:ring-gray-300 focus:outline-none placeholder:text-gray-400"
-                        />
+                        <AutoResizeTextarea id="세계관설정-desc-field" value={세계관설정Description} onChange={(e) => setWorldDescription(e.target.value)} placeholder="💡 예시: 소설의 분위기를 한 줄로 설명해 주세요. (예: 아늑한 찻집에서 치유받는 일상)" className={"resize-none py-3 min-h-[44px] " + "w-full bg-white border border-[#EBE6DB] rounded-xl px-4 py-2.5 text-xs text-[#0F172A] font-semibold focus:ring-1 focus:ring-gray-300 focus:outline-none placeholder:text-gray-400"} />
                       </div>
                     </div>
 
@@ -818,7 +962,7 @@ ${globalLorebooks.length > 0 ? globalLorebooks.map(l => `[Lore_Entry]\n- Name: $
                         <label className="block text-[11px] font-bold text-[#9A9A9E] uppercase tracking-wide">기존 전설 및 세부 공간 시나리오 (World Scenario)</label>
                         {renderAutofillButton('세계관설정Scenario')}
                       </div>
-                      <textarea
+                      <AutoResizeTextarea
                         id="세계관설정-scenario-field"
                         value={세계관설정Scenario}
                         onChange={(e) => setWorldScenario(e.target.value)}
@@ -832,12 +976,12 @@ ${globalLorebooks.length > 0 ? globalLorebooks.map(l => `[Lore_Entry]\n- Name: $
                         <label className="block text-[11px] font-bold text-[#0F172A] uppercase tracking-wide">시작 스토리 인트로 아이디어 (결정적 순간)</label>
                         {renderAutofillButton('introIdea')}
                       </div>
-                      <textarea
+                      <AutoResizeTextarea
                         id="세계관설정-intro-idea-field"
                         value={introIdea}
                         onChange={(e) => setIntroIdea(e.target.value)}
                         placeholder={`💡 설명: 여기에 적은 짧은 아이디어를 바탕으로 이야기가 시작될 때 AI가 실감나는 도입부(프롤로그)를 자동으로 작성해 줍니다.\n\n예시: 오늘 밤 잠을 자다가 갑자기 벼락에 맞고 이세계로 떨어졌다.`}
-                        className="w-full bg-white border border-[#EBE6DB] rounded-xl p-4 text-xs text-[#0F172A] font-semibold outline-none focus:ring-1 focus:ring-gray-300 h-28 resize-none leading-relaxed placeholder:text-gray-400"
+                        className="w-full bg-white border border-[#EBE6DB] rounded-xl p-4 text-xs text-[#0F172A] font-semibold outline-none focus:ring-1 focus:ring-gray-300 resize-none leading-relaxed placeholder:text-gray-400"
                       />
                     </div>
                   </motion.div>
@@ -864,14 +1008,7 @@ ${globalLorebooks.length > 0 ? globalLorebooks.map(l => `[Lore_Entry]\n- Name: $
                         <label className="block text-[11px] font-bold text-[#9A9A9E] uppercase tracking-wide">나의 이름 / 아바타 명칭 *</label>
                         {renderAutofillButton('주인공설정Name')}
                       </div>
-                      <input
-                        id="주인공설정-name-field"
-                        type="text"
-                        value={주인공설정Name}
-                        onChange={(e) => setPlayerName(e.target.value)}
-                        placeholder="💡 예시: 소설 속 주인공이 될 나의 이름을 정해 주세요. (예: 루나, 여행자)"
-                        className="w-full bg-white border border-[#EBE6DB] rounded-xl px-4 py-2.5 text-xs text-[#0F172A] font-semibold focus:ring-1 focus:ring-gray-300 focus:outline-none placeholder:text-gray-400"
-                      />
+                      <AutoResizeTextarea id="주인공설정-name-field" value={주인공설정Name} onChange={(e) => setPlayerName(e.target.value)} placeholder="💡 예시: 소설 속 주인공이 될 나의 이름을 정해 주세요. (예: 루나, 여행자)" className={"resize-none py-3 min-h-[44px] " + "w-full bg-white border border-[#EBE6DB] rounded-xl px-4 py-2.5 text-xs text-[#0F172A] font-semibold focus:ring-1 focus:ring-gray-300 focus:outline-none placeholder:text-gray-400"} />
                     </div>
 
                     <div>
@@ -879,7 +1016,7 @@ ${globalLorebooks.length > 0 ? globalLorebooks.map(l => `[Lore_Entry]\n- Name: $
                         <label className="block text-[11px] font-bold text-[#9A9A9E] mb-1.5 uppercase tracking-wide">나의 인격/성향/외모 및 이 세계로 오게 된 사연 (My Persona Details)</label>
                         {renderAutofillButton('주인공설정Persona')}
                       </div>
-                      <textarea
+                      <AutoResizeTextarea
                         id="주인공설정-persona-field"
                         value={주인공설정Persona}
                         onChange={(e) => setPlayerPersona(e.target.value)}
@@ -1047,12 +1184,12 @@ ${globalLorebooks.length > 0 ? globalLorebooks.map(l => `[Lore_Entry]\n- Name: $
                                         <label className="block text-[11px] font-bold text-[#9A9A9E] font-sans">상대 캐릭터 설정 (Character Description)</label>
                                         {renderAutofillButton('npcDescription', selectedNpc.id)}
                                       </div>
-                                      <textarea
+                                      <AutoResizeTextarea
                                         id={`npc-bg-scene-${selectedNpc.id}`}
                                         value={selectedNpc.location_scenario || ''}
                                         onChange={(e) => handleUpdateNpc(selectedNpc.id, 'location_scenario', e.target.value)}
                                         placeholder={`💡 설명: 이 캐릭터의 주요 특징이나 전반적인 설정 묘사를 자유롭게 적어주세요.\n\n예시: 비밀을 가득 품고 있는 수수께끼의 소녀. 어딘가 차가워 보이지만 속은 따뜻하다.`}
-                                        className="w-full bg-white border border-[#EBE6DB] focus:border-gray-400 rounded-xl p-3.5 text-xs text-[#0F172A] font-semibold h-44 outline-none focus:ring-1 focus:ring-gray-300 resize-none leading-relaxed placeholder:text-gray-400"
+                                        className="w-full bg-white border border-[#EBE6DB] focus:border-gray-400 rounded-xl p-3.5 text-xs text-[#0F172A] font-semibold outline-none focus:ring-1 focus:ring-gray-300 resize-none leading-relaxed placeholder:text-gray-400"
                                       />
                                     </div>
 
@@ -1110,7 +1247,7 @@ ${globalLorebooks.length > 0 ? globalLorebooks.map(l => `[Lore_Entry]\n- Name: $
                                         <label className="block text-[11px] font-bold text-[#9A9A9E] mb-0.5 font-sans">상대방 대화 예시 (Few-shot Examples)</label>
                                         {renderAutofillButton('npcDialogue', selectedNpc.id)}
                                       </div>
-                                      <textarea
+                                      <AutoResizeTextarea
                                         value={selectedNpc.dialogue_examples || ''}
                                         onChange={(e) => handleUpdateNpc(selectedNpc.id, 'dialogue_examples', e.target.value)}
                                         placeholder={`💡 설명: 상대방이 질문하거나 상황을 건넸을 때, 이 인물이 대답할 목소리와 톤앤매너의 정형화된 견본 세트입니다.\n\n예시:\n<유저>: 안녕, 오늘은 무슨 책을 읽고 있어?\n<상대방>: *들려오던 책장을 멈추고 쌀쌀맞게 힐끗 쳐다보며* "특별히 당신에게 들려줄 이야기는 없어요."`}
@@ -1305,23 +1442,11 @@ ${globalLorebooks.length > 0 ? globalLorebooks.map(l => `[Lore_Entry]\n- Name: $
                                           <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5 bg-[#FAF9F5] p-3 rounded-xl border border-[#EBE6DB]">
                                             <div>
                                               <label className="block text-[8.5px] font-black text-[#9A9A9E] mb-1">분류 및 관계 명칭</label>
-                                              <input
-                                                type="text"
-                                                value={rel.type}
-                                                onChange={(e) => handleUpdateRelationship(rel.id, 'type', e.target.value)}
-                                                placeholder="예: 든든한 동료"
-                                                className="w-full bg-white border border-[#EBE6DB] focus:border-[#9A9A9E] rounded-lg px-2.5 py-1.5 text-xs text-[#4C4C54] font-bold focus:outline-none"
-                                              />
+                                              <AutoResizeTextarea value={rel.type} onChange={(e) => handleUpdateRelationship(rel.id, 'type', e.target.value)} placeholder="예: 든든한 동료" className={"resize-none py-3 min-h-[44px] " + "w-full bg-white border border-[#EBE6DB] focus:border-[#9A9A9E] rounded-lg px-2.5 py-1.5 text-xs text-[#4C4C54] font-bold focus:outline-none"} />
                                             </div>
                                             <div>
                                               <label className="block text-[8.5px] font-black text-[#9A9A9E] mb-1">상세 관계 설명</label>
-                                              <input
-                                                type="text"
-                                                value={rel.description}
-                                                onChange={(e) => handleUpdateRelationship(rel.id, 'description', e.target.value)}
-                                                placeholder="예: 서로 오래 아껴두며 믿고 의지하는 오랜 친구입니다."
-                                                className="w-full bg-white border border-[#EBE6DB] focus:border-[#9A9A9E] rounded-lg px-2.5 py-1.5 text-[11px] text-[#5A5A61] focus:outline-none font-semibold leading-relaxed"
-                                              />
+                                              <AutoResizeTextarea value={rel.description} onChange={(e) => handleUpdateRelationship(rel.id, 'description', e.target.value)} placeholder="예: 서로 오래 아껴두며 믿고 의지하는 오랜 친구입니다." className={"resize-none py-3 min-h-[44px] " + "w-full bg-white border border-[#EBE6DB] focus:border-[#9A9A9E] rounded-lg px-2.5 py-1.5 text-[11px] text-[#5A5A61] focus:outline-none font-semibold leading-relaxed"} />
                                             </div>
                                           </div>
                                         </div>
@@ -1382,13 +1507,7 @@ ${globalLorebooks.length > 0 ? globalLorebooks.map(l => `[Lore_Entry]\n- Name: $
                             <div>
                               <label className="block text-[11px] font-bold text-[#0F172A] mb-1.5">설정 단어 (제목)</label>
                               <div className="relative">
-                                <input
-                                  type="text"
-                                  value={lore.title}
-                                  onChange={(e) => handleUpdateGlobalLorebook(lore.id, 'title', e.target.value.slice(0, 20))}
-                                  placeholder="설정 단어를 입력하세요 (예: 전설의 명검)"
-                                  className="w-full bg-white border border-[#EBE6DB] rounded-xl px-3 py-2.5 text-xs text-[#0F172A] font-semibold focus:border-gray-400 focus:outline-none focus:ring-1 focus:ring-gray-300 placeholder:text-[#0F172A]"
-                                />
+                                <AutoResizeTextarea value={lore.title} onChange={(e) => handleUpdateGlobalLorebook(lore.id, 'title', e.target.value.slice(0, 20))} placeholder="설정 단어를 입력하세요 (예: 전설의 명검)" className={"resize-none py-3 min-h-[44px] " + "w-full bg-white border border-[#EBE6DB] rounded-xl px-3 py-2.5 text-xs text-[#0F172A] font-semibold focus:border-gray-400 focus:outline-none focus:ring-1 focus:ring-gray-300 placeholder:text-[#0F172A]"} />
                                 <div className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-[#0F172A] font-mono">
                                   {lore.title.length}/20
                                 </div>
@@ -1405,7 +1524,7 @@ ${globalLorebooks.length > 0 ? globalLorebooks.map(l => `[Lore_Entry]\n- Name: $
                                 </div>
                               </div>
                               <div className="border border-[#EBE6DB] rounded-xl p-3 bg-white">
-                                <textarea
+                                <AutoResizeTextarea
                                   value={lore.keywords}
                                   onChange={(e) => handleUpdateGlobalLorebook(lore.id, 'keywords', e.target.value)}
                                   placeholder={`💡 설명: 대화 중 인식될 키워드를 쉼표(,)로 구분해서 입력해주세요. 입력한 매칭 단어가 사용자나 NPC 입에서 언급되면 이 설정이 반영됩니다.\n\n예: 성검, 명검, 전설의 검`}
@@ -1422,11 +1541,11 @@ ${globalLorebooks.length > 0 ? globalLorebooks.map(l => `[Lore_Entry]\n- Name: $
                                 <span className="text-[#9A9A9E] mr-0.5">*</span>설정 지식 본문
                               </label>
                               <div className="border border-[#EBE6DB] rounded-xl p-3 bg-white relative">
-                                <textarea
+                                <AutoResizeTextarea
                                   value={lore.content}
                                   onChange={(e) => handleUpdateGlobalLorebook(lore.id, 'content', e.target.value.slice(0, 500))}
                                   placeholder={`💡 설명: AI가 이 키워드를 바탕으로 어떻게 세계관을 그려 나갈지 서술하세요.\n\n예시: 이 검은 고대 왕국의 유산으로, 진정한 용사만이 뽑을 수 있으며 착용 시 빛의 속도로 움직일 수 있게 됩니다.`}
-                                  className="w-full bg-transparent text-xs text-[#0F172A] font-semibold outline-none resize-none h-32 placeholder:text-gray-400 mb-4 leading-relaxed"
+                                  className="w-full bg-transparent text-xs text-[#0F172A] font-semibold outline-none resize-none placeholder:text-gray-400 mb-4 leading-relaxed"
                                 />
                                 <div className="absolute right-3 bottom-2 text-[10px] text-[#0F172A] font-mono">
                                   {lore.content.length}/500
@@ -1503,3 +1622,15 @@ ${globalLorebooks.length > 0 ? globalLorebooks.map(l => `[Lore_Entry]\n- Name: $
     </div>
   );
 }
+const AutoResizeTextarea = (props: React.TextareaHTMLAttributes<HTMLTextAreaElement>) => {
+  const ref = React.useRef<HTMLTextAreaElement>(null);
+  React.useEffect(() => {
+    if (ref.current) {
+      ref.current.style.height = 'auto';
+      ref.current.style.height = `${ref.current.scrollHeight}px`;
+    }
+  }, [props.value]);
+  return <textarea ref={ref} {...props} style={{ ...props.style, overflow: 'hidden' }} rows={props.rows || 1} />;
+};
+
+

@@ -46,23 +46,45 @@ export function ChatRoom({
   onOpenApiKeySettings,
   isApiKeyConfigured 
 }: ChatRoomProps) {
-  const [localCharacter, setLocalCharacter] = useState<DBCharacter>(character);
+  const [localCharacter, setLocalCharacter] = useState<DBCharacter>(() => {
+    try {
+      const saved = localStorage.getItem(`bucket-${character.id}-A`);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && parsed.id === character.id) {
+          return parsed;
+        }
+      }
+    } catch (e) {
+      console.error("Failed to load local character from bucket-A:", e);
+    }
+    return character;
+  });
   const [dashboardTab, setDashboardTab] = useState<'settings' | 'telemetry'>('settings');
 
-  // 세계관 초기 설정값을 캐릭터 속성 및 로어북에서 정학히 파싱
+  // 세계관 초기 설정값을 캐릭터 속성 및 로어북에서 정확히 파싱
   const initialSettings = (() => {
-    let 세계관설정NameVal = character.name || '';
-    let 세계관설정DescriptionVal = character.description || '';
+    let 세계관설정NameVal = localCharacter.name || '';
+    let 세계관설정DescriptionVal = localCharacter.description || '';
     let 세계관설정ScenarioVal = '';
     
-    const loreStr = localStorage.getItem(`lore-${character.id}`);
+    const loreStr = localStorage.getItem(`lore-${localCharacter.id}`);
     if (loreStr) {
       try {
         const parsedLore = JSON.parse(loreStr);
         if (Array.isArray(parsedLore)) {
-          const scenarioItem = parsedLore.find((item: any) => item.name === '세계관 배경 시나리오');
+          const scenarioItem = parsedLore.find((item: any) => 
+            item.name === '세계관 이름 및 한 줄 요약' || item.name === '세계관 배경 시나리오'
+          );
           if (scenarioItem) {
-            세계관설정ScenarioVal = scenarioItem.description || '';
+            if (scenarioItem.name === '세계관 이름 및 한 줄 요약' && scenarioItem.description.includes('시나리오:')) {
+              const scenarioMatch = scenarioItem.description.match(/시나리오:\s*([\s\S]+)$/);
+              if (scenarioMatch) {
+                세계관설정ScenarioVal = scenarioMatch[1].trim();
+              }
+            } else {
+              세계관설정ScenarioVal = scenarioItem.description || '';
+            }
           }
         }
       } catch (e) {
@@ -70,20 +92,20 @@ export function ChatRoom({
       }
     }
     
-    if (!세계관설정ScenarioVal && character.system_prompt) {
-      const match = character.system_prompt.match(/\[World_Scenario\("([\s\S]*?)"\)\]/);
+    if (!세계관설정ScenarioVal && localCharacter.system_prompt) {
+      const match = localCharacter.system_prompt.match(/\[World_Scenario[\s\S]*?\]/);
       if (match) {
-        세계관설정ScenarioVal = match[1];
+        // Extract content inside quotes inside the bracket
+        const cleanMatch = match[0].match(/["']([\s\S]*?)["']/);
+        if (cleanMatch) {
+          세계관설정ScenarioVal = cleanMatch[1];
+        }
       }
     }
     
     let introIdeaVal = '';
-    if (character.greeting_message) {
-      if (character.greeting_message.startsWith('[AUTO_START_INTRO]')) {
-        introIdeaVal = character.greeting_message.replace('[AUTO_START_INTRO]', '').trim();
-      } else {
-        introIdeaVal = character.greeting_message;
-      }
+    if (localCharacter.greeting_message) {
+      introIdeaVal = localCharacter.greeting_message;
     }
 
     return {
@@ -91,8 +113,8 @@ export function ChatRoom({
       세계관설정Description: 세계관설정DescriptionVal,
       세계관설정Scenario: 세계관설정ScenarioVal,
       introIdea: introIdeaVal,
-      sharingLevel: character.sharing_level || 'public',
-      allowRemix: character.allow_remix !== false,
+      sharingLevel: localCharacter.sharing_level || 'public',
+      allowRemix: localCharacter.allow_remix !== false,
     };
   })();
 
@@ -172,28 +194,51 @@ export function ChatRoom({
     onExit();
   };
 
+  const saveSessionToLocal = (
+    currentMessages: Message[],
+    currentNarrative: string,
+    currentLoc: string,
+    currentPlot: string,
+    stage: number,
+    temp: number,
+    feeling: string,
+    anchors: string[],
+    vars: string[]
+  ) => {
+    const sessionData = {
+      messages: currentMessages,
+      narrativeState: currentNarrative,
+      currentLocation: currentLoc,
+      plotSummary: currentPlot,
+      relationshipStage: stage,
+      emotionalTemperature: temp,
+      innerFeeling: feeling,
+      anchorEvents: anchors,
+      worldVariables: vars,
+      userPersona
+    };
+    localStorage.setItem(`chatsession-${localCharacter.id}`, JSON.stringify(sessionData));
+  };
+
   const handleClearHistory = () => {
-    // 1. 로컬 스토리지 데이터 완전 삭제 (세션 및 버킷 데이터)
-    localStorage.removeItem(`chatsession-${localCharacter.id}`);
+    // 1. 로컬 스토리지 데이터 완전 삭제 (버킷 데이터 및 세션)
     localStorage.removeItem(`bucket-${localCharacter.id}-B`);
     localStorage.removeItem(`bucket-${localCharacter.id}-C`);
     localStorage.removeItem(`bucket-${localCharacter.id}-E`);
     
     // 2. 인트로 메시지 정제 (태그 제거)
     let cleanGreeting = character.greeting_message || '*환영합니다. 이야기가 시작됩니다.*';
-    if (cleanGreeting.startsWith('[AUTO_START_INTRO]')) {
-      cleanGreeting = cleanGreeting.replace('[AUTO_START_INTRO]', '').trim();
-    }
 
     // 3. 모든 상태를 초기(ABSOLUTE INITIAL) 상태로 강제 리셋
-    setMessages([
+    const newMessages: Message[] = [
       {
         id: `intro-${Date.now()}`,
         role: 'model',
         text: cleanGreeting
       }
-    ]);
-    
+    ];
+
+    setMessages(newMessages);
     setPlotSummary('');
     setNarrativeState('아직 기록된 서사가 없습니다.');
     setCurrentLocation('장소 설정 중');
@@ -206,6 +251,19 @@ export function ChatRoom({
     setIsLoading(false);
     setRelevantMemories([]);
     hasScrolledToStart.current = false;
+
+    // 4. 리셋된 즉시 저장 (사용자 요청: 인트로 제외 삭제 유지)
+    saveSessionToLocal(
+      newMessages,
+      '아직 기록된 서사가 없습니다.',
+      '장소 설정 중',
+      '',
+      1,
+      4,
+      '냉정히 가라앉은 상태',
+      [],
+      []
+    );
   };
 
   const getRelationshipStageName = (stage: number) => {
@@ -244,30 +302,40 @@ export function ChatRoom({
       return;
     }
 
-    // 1. system_prompt 내의 설정값들을 정규식으로 안전하게 대체 조율
+    // 1. system_prompt 내의 설정값들을 극도로 강력하고 유연한 정밀 매칭 방식을 사용해 완전 대체 조율
     let updatedPrompt = localCharacter.system_prompt || '';
-    updatedPrompt = updatedPrompt.replace(/\[World_Setting\("([\s\S]*?)"\)\]/g, `[World_Setting("${editWorldName}")]`);
-    updatedPrompt = updatedPrompt.replace(/\[World_Description\("([\s\S]*?)"\)\]/g, `[World_Description("${editWorldDescription}")]`);
-    updatedPrompt = updatedPrompt.replace(/\[World_Scenario\("([\s\S]*?)"\)\]/g, `[World_Scenario("${editWorldScenario}")]`);
+    
+    // 이전에 어떤 형태의 괄호, 따옴표가 오든 완벽하게 잡아냅니다
+    updatedPrompt = updatedPrompt.replace(/\[World_Setting[\s\S]*?\]/g, `[World_Setting("${editWorldName}")]`);
+    updatedPrompt = updatedPrompt.replace(/\[World_Description[\s\S]*?\]/g, `[World_Description("${editWorldDescription}")]`);
+    updatedPrompt = updatedPrompt.replace(/\[World_Scenario[\s\S]*?\]/g, `[World_Scenario("${editWorldScenario}")]`);
 
     // 2. greeting_message도 업데이트
     let updatedGreeting = editIntroIdea;
-    if (editIntroIdea.trim() && !editIntroIdea.startsWith('[AUTO_START_INTRO]')) {
-      updatedGreeting = `[AUTO_START_INTRO] ${editIntroIdea.trim()}`;
-    }
 
+    // 3. metadata 필드까지 원천적으로 정합성을 완벽하게 유지시킵니다
     const updatedChar: DBCharacter = {
       ...localCharacter,
       name: editWorldName,
-      description: editWorldDescription || `${editWorldName}의 이야기 세계관`,
+      description: editWorldDescription,
       system_prompt: updatedPrompt,
       greeting_message: updatedGreeting,
       sharing_level: editSharingLevel,
       allow_remix: editAllowRemix,
+      metadata: {
+        ...localCharacter.metadata,
+        세계관설정Name: editWorldName,
+        세계관설정Description: editWorldDescription,
+        세계관설정Scenario: editWorldScenario,
+        sharingLevel: editSharingLevel,
+        allowRemix: editAllowRemix,
+        introIdea: editIntroIdea,
+      },
       updated_at: new Date().toISOString()
     };
 
     setLocalCharacter(updatedChar);
+    localStorage.setItem(`bucket-${localCharacter.id}-A`, JSON.stringify(updatedChar));
 
     // Local Storage - custom_characters 에 있다면 함께 업데이트 반영
     const custom = localStorage.getItem('custom_characters');
@@ -281,30 +349,60 @@ export function ChatRoom({
       }
     }
 
-    // Local Storage - lore-${id} 세부 시나리오 설정도 반영
+    // Local Storage - lore-${id} 세부 시나리오 설정도 반영 ('세계관 이름 및 한 줄 요약' 과 '세계관 배경 시나리오' 모두 대응)
     const loreStr = localStorage.getItem(`lore-${localCharacter.id}`);
+    const worldDescriptionText = `[세계관 설정] 이름: ${editWorldName}. 요약: ${editWorldDescription}. 시나리오: ${editWorldScenario}`;
+    
     if (loreStr) {
       try {
         const parsedLore = JSON.parse(loreStr);
         if (Array.isArray(parsedLore)) {
+          let hasUpdated = false;
           const updatedLore = parsedLore.map(item => {
-            if (item.name === '세계관 배경 시나리오') {
-              return { ...item, description: editWorldScenario };
+            if (item.name === '세계관 이름 및 한 줄 요약' || item.name === '세계관 배경 시나리오') {
+              hasUpdated = true;
+              return { 
+                ...item, 
+                name: '세계관 이름 및 한 줄 요약',
+                description: worldDescriptionText
+              };
             }
             return item;
           });
+          
+          if (!hasUpdated) {
+            updatedLore.unshift({
+              name: '세계관 이름 및 한 줄 요약',
+              description: worldDescriptionText
+            });
+          }
           localStorage.setItem(`lore-${localCharacter.id}`, JSON.stringify(updatedLore));
         }
       } catch (e) {
         console.error("Failed to update lore- scenario info:", e);
       }
     } else {
-      // 로어가 없는 시스템 캐릭터 경우 신규 생성 작성
       const initialLore = [
-        { name: '세계관 배경 시나리오', description: editWorldScenario }
+        { 
+          name: '세계관 이름 및 한 줄 요약', 
+          description: worldDescriptionText 
+        }
       ];
       localStorage.setItem(`lore-${localCharacter.id}`, JSON.stringify(initialLore));
     }
+
+    // 4. 즉시 현재 시점의 기록된 정보까지 로컬 세션 스토리지에 동기화 보존
+    saveSessionToLocal(
+      messages,
+      narrativeState,
+      currentLocation,
+      plotSummary,
+      relationshipStage,
+      emotionalTemperature,
+      innerFeeling,
+      anchorEvents,
+      worldVariables
+    );
 
     setIsSavedSuccessfully(true);
     setTimeout(() => setIsSavedSuccessfully(false), 3000);
@@ -493,9 +591,10 @@ export function ChatRoom({
     }
   }, [messages, isLoading]);
 
+  // 세션 자동 저장 및 페이지 이탈 방지 핸들러
   useEffect(() => {
-    if (messages.length > 0) {
-      const sessionData = {
+    const handleBeforeUnload = () => {
+      saveSessionToLocal(
         messages,
         narrativeState,
         currentLocation,
@@ -504,11 +603,20 @@ export function ChatRoom({
         emotionalTemperature,
         innerFeeling,
         anchorEvents,
-        worldVariables,
-        userPersona // PERSISTENCE FIX: Include userPersona
-      };
-      localStorage.setItem(`chatsession-${localCharacter.id}`, JSON.stringify(sessionData));
+        worldVariables
+      );
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    
+    if (messages.length > 0) {
+      handleBeforeUnload();
     }
+
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      handleBeforeUnload(); // 컴포넌트 언마운트 시점에 최종 저장 시도
+    };
   }, [messages, narrativeState, currentLocation, plotSummary, relationshipStage, emotionalTemperature, innerFeeling, anchorEvents, worldVariables, localCharacter.id, userPersona]);
 
   const renderMessageContent = (msg: Message) => {
@@ -654,105 +762,7 @@ export function ChatRoom({
     );
   };
 
-  const hasAutoStarted = useRef(false);
 
-  useEffect(() => {
-    if (messages.length === 1 && messages[0].text.startsWith('[AUTO_START_INTRO]') && !hasAutoStarted.current) {
-      hasAutoStarted.current = true;
-      const introIdea = messages[0].text.replace('[AUTO_START_INTRO]', '').trim();
-      const messageId = messages[0].id;
-      
-      setMessages([{ id: messageId, role: 'model', text: '' }]);
-      setIsLoading(true);
-
-      const submitStartTime = performance.now();
-      let measuredTTFT: number | null = null;
-      let assistantMessage = '';
-
-      const userApiKey = localStorage.getItem('gemini_user_api_key') || '';
-      const userModel = localStorage.getItem('gemini_user_model') || 'gemini-3.5-flash';
-      const prompt = `[시스템 지시: 사용자가 이 세계관의 첫 시작 인트로 아이디어를 제공했습니다: "${introIdea}". 이 아이디어에 서사적 살을 붙여, 플레이어가 이 세계관에 방금 깨어나거나 진입했을 때의 상황을 묘사하는 실감나는 프롤로그 문장과 첫 대사를 작성하세요. 이것은 채팅의 첫 번째 메시지입니다.]`;
-
-      fetch('/api/chat', {
-        method: 'POST',
-        headers: getSafeHeaders(userApiKey, userModel),
-        body: JSON.stringify({
-          message: prompt,
-          history: [],
-          character: character,
-          persona: userPersona,
-          
-          // 5대 버킷 동적 파라미터 전달 (v2.0)
-          relationshipStage,
-          emotionalTemperature,
-          innerFeeling,
-          anchorEvents,
-          worldVariables
-        })
-      })
-      .then(async (response) => {
-        if (!response.ok) {
-          const errorData = await response.json().catch(() => ({}));
-          throw new Error(errorData.error || '인트로 생성 실패');
-        }
-        const reader = response.body?.getReader();
-        const decoder = new TextDecoder();
-        
-        let pendingBuffer = '';
-        let assistantMessage = '';
-        if (reader) {
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            
-            const chunk = decoder.decode(value, { stream: true });
-            pendingBuffer += chunk;
-            const lines = pendingBuffer.split('\n');
-            
-            pendingBuffer = lines.pop() || '';
-            
-            for (const line of lines) {
-              const trimmed = line.trim();
-              if (!trimmed) continue;
-              if (trimmed.startsWith('data: ')) {
-                const data = trimmed.slice(6).trim();
-                if (data === '[DONE]') break;
-                let parsed: any = null;
-                try {
-                  parsed = JSON.parse(data);
-                  if (parsed.text) {
-                    if (measuredTTFT === null) {
-                      measuredTTFT = performance.now() - submitStartTime;
-                      setLastTTFT(Math.round(measuredTTFT));
-                    }
-                    assistantMessage += parsed.text;
-                  } else if (parsed.narrativeState) {
-                    setNarrativeState(parsed.narrativeState);
-                  } else if (parsed.currentLocation) {
-                    setCurrentLocation(parsed.currentLocation);
-                  }
-                } catch (e) {}
-              }
-            }
-          }
-        }
-        setMessages([{ id: messageId, role: 'model', text: assistantMessage }]);
-        setIsLoading(false);
-      })
-      .catch((error) => {
-        console.error(error);
-        setIsLoading(false);
-        const isAuthError = error.message.includes('API') || error.message.includes('키');
-        setMessages(prev => [...prev.filter(m => m.id !== messageId), {
-          id: `system-err-${Date.now()}`,
-          role: 'system',
-          text: `*시스템(System): 서사 인트로 로딩에 실패했습니다. (${error.message})*`,
-          isError: true,
-          errorType: isAuthError ? 'auth' : 'network'
-        }]);
-      });
-    }
-  }, [messages, character, userPersona]);
 
   const [selectedZoomImage, setSelectedZoomImage] = useState<string | null>(null);
 
@@ -829,6 +839,11 @@ export function ChatRoom({
           structureFormatMode,
           memoryTierMode,
           l1CacheSize,
+
+          // 실시간 편집 창 설정 강제 결합 동기화
+          worldName: editWorldName,
+          worldDescription: editWorldDescription,
+          worldScenario: editWorldScenario,
 
           // 5대 버킷 동적 파라미터 전달 (v2.0)
           relationshipStage,
@@ -1137,7 +1152,7 @@ export function ChatRoom({
               <h3 className="font-serif font-black text-[#1A1A1E] text-[13px] flex items-center gap-2 tracking-widest uppercase">
                 <LayoutDashboard size={16} className="text-[#96A7C1]" /> 집필 설정 및 기록
               </h3>
-              <button onClick={() => setIsDashboardOpen(false)} className="text-[#9A9A9E] hover:text-[#0F172A] transition-colors p-1 rounded-md hover:bg-[#FAF9F5] cursor-pointer">
+              <button type="button" onClick={() => setIsDashboardOpen(false)} className="text-[#9A9A9E] hover:text-[#0F172A] transition-colors p-1 rounded-md hover:bg-[#FAF9F5] cursor-pointer">
                 <X size={16} />
               </button>
             </div>
@@ -1198,18 +1213,39 @@ export function ChatRoom({
               </div>
 
               <div className="pt-6 border-t border-[#EBE6DB] space-y-6 text-left">
-                <h4 className="text-[11px] font-black text-[#847365] tracking-widest uppercase opacity-60 mb-2">현재 서사 상태 (Records)</h4>
+                <div className="flex justify-between items-center mb-2">
+                  <h4 className="text-[11px] font-black text-[#847365] tracking-widest uppercase opacity-60">현재 서사 상태 (Records)</h4>
+                  <button 
+                    type="button"
+                    onClick={() => setShowResetConfirm(true)}
+                    className="text-[10px] text-[#D32F2F] hover:underline font-bold transition-all cursor-pointer flex items-center gap-1"
+                  >
+                    <RotateCcw size={10} /> 전체 기록 초기화
+                  </button>
+                </div>
                 
                 {/* Narrative State & Location */}
                 <div className="bg-[#FFFFFF] p-4 rounded-xl border border-[#EBE6DB] shadow-sm text-left">
-                  <div className="space-y-3">
+                  <div className="space-y-4">
                     <div className="text-xs text-[#5A5A61] leading-relaxed font-sans">
-                      <span className="font-bold text-[#1A1A1E] block mb-1">🎭 정립된 관계 서사:</span> 
-                      <div className="bg-[#FAF9F5] p-2 rounded-lg border border-[#EBE6DB]">{narrativeState || '아직 기록된 서사가 없습니다.'}</div>
+                      <span className="font-bold text-[#1A1A1E] block mb-1">🎭 정립된 관계 서사 (수정 가능):</span> 
+                      <textarea
+                        rows={2}
+                        value={narrativeState}
+                        onChange={(e) => setNarrativeState(e.target.value)}
+                        className="w-full bg-[#FAF9F5] border border-[#EBE6DB] focus:border-[#96A7C1] rounded-xl text-xs p-3 outline-none resize-none transition-all text-[#1A1A1E] leading-relaxed"
+                        placeholder="아직 기록된 서사가 없습니다."
+                      />
                     </div>
                     <div className="text-xs text-[#5A5A61] leading-relaxed font-sans">
-                      <span className="font-bold text-[#1A1A1E] block mb-1">📍 현재 무대 배경:</span> 
-                      <div className="bg-[#FAF9F5] p-2 rounded-lg border border-[#EBE6DB]">{currentLocation || '장소 설정 중'}</div>
+                      <span className="font-bold text-[#1A1A1E] block mb-1">📍 현재 무대 배경 (수정 가능):</span> 
+                      <input
+                        type="text"
+                        value={currentLocation}
+                        onChange={(e) => setCurrentLocation(e.target.value)}
+                        className="w-full bg-[#FAF9F5] border border-[#EBE6DB] focus:border-[#96A7C1] rounded-xl text-xs p-3 outline-none transition-all text-[#1A1A1E]"
+                        placeholder="장소 설정 중"
+                      />
                     </div>
                   </div>
                 </div>
@@ -1258,12 +1294,16 @@ export function ChatRoom({
                 {/* Plot Summary */}
                 <div className="bg-[#FFFFFF] p-4 rounded-xl border border-[#EBE6DB] shadow-sm text-left">
                   <h4 className="text-[10px] font-black text-[#1A1A1E] mb-2 uppercase tracking-wider">
-                    📝 현재까지의 줄거리 줄기
+                    📝 현재까지의 줄거리 줄기 (수정 가능)
                   </h4>
-                  <div className="text-[11px] text-[#5A5A61] leading-[2.0] font-serif italic p-3.5 bg-[#FAF9F5] rounded-lg border border-[#EBE6DB]">
-                    {plotSummary || '서사의 흐름이 기록되고 있습니다.'}
-                  </div>
-                </div>                
+                  <textarea
+                    rows={4}
+                    value={plotSummary}
+                    onChange={(e) => setPlotSummary(e.target.value)}
+                    className="w-full text-[11px] text-[#5A5A61] leading-relaxed font-serif italic p-3.5 bg-[#FAF9F5] rounded-lg border border-[#EBE6DB] focus:border-[#96A7C1] outline-none resize-none transition-all"
+                    placeholder="서사의 흐름이 기록되고 있습니다."
+                  />
+                </div>
               </div>
             </div>
           </motion.div>

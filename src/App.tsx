@@ -10,8 +10,6 @@ import { CharacterList } from './components/CharacterList';
 import { ChatRoom } from './components/ChatRoom';
 import { CharacterCreator } from './components/CharacterCreator';
 import { ApiKeyManager } from './components/ApiKeyManager';
-import { signInAsGuest } from './lib/supabase/auth';
-import { createChatSession } from './lib/supabase/db';
 import type { DBCharacter, NarrativeSnapshot } from './types';
 
 type ViewState = 'character_list' | 'chat' | 'character_creator' | 'social_feed';
@@ -20,9 +18,7 @@ export default function App() {
   const [view, setView] = useState<ViewState>('character_list');
   const [selectedCharacter, setSelectedCharacter] = useState<DBCharacter | null>(null);
   const [userPersona, setUserPersona] = useState<string>('');
-  const [currentUser, setCurrentUser] = useState<any>(null);
   const [chatSessionId, setChatSessionId] = useState<string | null>(null);
-  const [isAuthenticating, setIsAuthenticating] = useState(true);
 
   // Api Key Config States
   const [isApiKeyModalOpen, setIsApiKeyModalOpen] = useState(false);
@@ -42,23 +38,6 @@ export default function App() {
     setTempModel(userModel);
   }, [userApiKey]);
 
-  useEffect(() => {
-    const initAuth = async () => {
-      try {
-        const user = await signInAsGuest();
-        if (user) {
-          console.log('Guest Auth Success:', user.id);
-          setCurrentUser(user);
-        }
-      } catch (err) {
-        console.error('Auth initialization failed:', err);
-      } finally {
-        setIsAuthenticating(false);
-      }
-    };
-    initAuth();
-  }, []);
-
   const handleSelectCharacter = async (character: DBCharacter) => {
     setSelectedCharacter(character);
     
@@ -70,15 +49,10 @@ export default function App() {
         // If we have a persona and messages, go straight to chat
         if (parsed && parsed.userPersona) {
           setUserPersona(parsed.userPersona);
-          if (currentUser) {
-            if (parsed.messages) setInitialMessages(parsed.messages);
-            setInitialNarrativeState(parsed.narrativeState || '');
-            setInitialLocation(parsed.currentLocation || '');
-            setInitialPlotSummary(parsed.plotSummary || '');
-
-            const sessionId = await createChatSession(currentUser.id, character.id, parsed.userPersona);
-            setChatSessionId(sessionId);
-          }
+          if (parsed.messages) setInitialMessages(parsed.messages);
+          setInitialNarrativeState(parsed.narrativeState || '');
+          setInitialLocation(parsed.currentLocation || '');
+          setInitialPlotSummary(parsed.plotSummary || '');
           setView('chat');
           return;
         }
@@ -88,12 +62,16 @@ export default function App() {
     }
     
     // No existing session, set default persona and jump straight to chat
-    const defaultPersona = "여행자";
-    setUserPersona(defaultPersona);
-    if (currentUser) {
-      const sessionId = await createChatSession(currentUser.id, character.id, defaultPersona);
-      setChatSessionId(sessionId);
+    let defaultPersona = "여행자";
+    if (character.metadata?.주인공설정Name) {
+      defaultPersona = character.metadata.주인공설정Name;
+    } else if (character.system_prompt) {
+      const match = character.system_prompt.match(/\[My_Character_Protagonist\]\s*-\s*Name:\s*"([^"]+)"/i);
+      if (match && match[1]) {
+        defaultPersona = match[1];
+      }
     }
+    setUserPersona(defaultPersona);
     setView('chat');
   };
 
@@ -104,7 +82,7 @@ export default function App() {
 
   const handleStartChat = async (persona: string, isContinue?: boolean) => {
     setUserPersona(persona);
-    if (currentUser && selectedCharacter) {
+    if (selectedCharacter) {
       if (isContinue) {
         const saved = localStorage.getItem(`chatsession-${selectedCharacter.id}`);
         if (saved) {
@@ -127,9 +105,6 @@ export default function App() {
         setInitialLocation('');
         setInitialPlotSummary('');
       }
-
-      const sessionId = await createChatSession(currentUser.id, selectedCharacter.id, persona);
-      setChatSessionId(sessionId);
     }
     setView('chat');
   };
@@ -268,20 +243,7 @@ export default function App() {
         {/* Content Area */}
         <div className="flex-1 overflow-hidden flex flex-col relative w-full h-full bg-white">
           <AnimatePresence mode="wait">
-            {isAuthenticating && view === 'character_list' ? (
-              <motion.div 
-                key="loading-view"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                className="flex-1 flex flex-col items-center justify-center"
-              >
-                <div className="w-10 h-10 rounded-xl bg-[#ECE9E0] text-gray-400 flex items-center justify-center animate-spin border border-[#EBE6DB]">
-                  <Sparkles size={18} />
-                </div>
-                <p className="mt-4 text-gray-400 text-xs font-semibold uppercase tracking-widest animate-pulse">로딩 중...</p>
-              </motion.div>
-            ) : view === 'character_list' ? (
+            {view === 'character_list' ? (
               <motion.div 
                 key="character-list-view"
                 initial={{ opacity: 0 }}
